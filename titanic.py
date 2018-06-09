@@ -2,85 +2,68 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.preprocessing import LabelEncoder, scale
+from sklearn.preprocessing import LabelEncoder, StandardScaler, OneHotEncoder
 
 train = pd.read_csv(r"dataset\train.csv")
+train['Source'] = 0
+train['Survived'] = train['Survived'].replace(0, -1)
+result = train.Survived
+train = train.drop(['Survived'], axis=1)
 test = pd.read_csv(r"dataset\test.csv")
-combine = [train, test]
-print(train.describe())
-train.info()
+test['Source'] = 1
+all_df = pd.concat([train, test])
 
-print(test.describe())
-test.info()
+all_df['Title'] = all_df['Name'].str.split(',').str[1].str.split('.').str[0].str.strip()
+all_df['NbFamily'] = all_df['SibSp'] + all_df['Parch'] + 1
+all_df['Embarked'].fillna('S', inplace=True)
+all_df['Cabin'].fillna('Z', inplace=True)
+all_df['Cabin'] = all_df['Cabin'].str[0]
+all_df['TicketSize'] = all_df['Ticket'].map(all_df.groupby('Ticket')['PassengerId'].count())
+utitle = all_df['Title'].unique()
+uclass = all_df['Pclass'].unique()
+for i in uclass:
+	all_df['Fare'].fillna(all_df.loc[all_df['Pclass'] == i]['Fare'].dropna().median(), inplace = True)
+	for u in utitle:
+		all_df.loc[(all_df.Age.isnull()) & (all_df['Title'] == u) & (all_df['Pclass'] == i), 'Age'] \
+		= all_df[(all_df['Title'] == u) & (all_df['Pclass'] == i)]['Age'].median()
+all_df = pd.get_dummies(all_df, columns=['Title', 'Pclass', 'Embarked', 'Cabin'])
+all_df = all_df.drop(['PassengerId', 'Name', 'Ticket'], axis=1)
+all_df = all_df.apply(LabelEncoder().fit_transform)
 
-print(train[['Pclass', 'Survived']].groupby(['Pclass'], as_index=False).mean().sort_values(by='Survived', ascending=False))
-print(train[['Sex', 'Survived']].groupby(['Sex'], as_index=False).mean().sort_values(by='Survived', ascending=False))
-print(train[['Pclass', 'Sex', 'Survived']].groupby(['Pclass', 'Sex'], as_index=False).mean().sort_values(by='Survived', ascending=False))
-print(train[['Embarked', 'Survived']].groupby(['Embarked'], as_index=False).mean().sort_values(by='Survived', ascending=False))
-print(train[['SibSp', 'Survived']].groupby(['SibSp'], as_index=False).mean().sort_values(by='Survived', ascending=False))
-print(train[['Parch', 'Survived']].groupby(['Parch'], as_index=False).mean().sort_values(by='Survived', ascending=False))
+all_df.to_csv('try.csv')
 
+train_df = all_df[all_df['Source'] == 0].drop(['Source'], axis=1).values
+train_result = result.values
+test_df = all_df[all_df['Source'] == 1].drop(['Source'], axis=1).values
 
-# train['FamilyName'] = train['Name'].str.split(',').str[0]
-for dataset in combine:
-	labelEncoder_X = LabelEncoder()
-	dataset.Sex=labelEncoder_X.fit_transform(dataset.Sex)
-	dataset['Title'] = dataset['Name'].str.split(',').str[1].str.split('.').str[0].str.strip()
-	dataset['NbFamily'] = dataset['SibSp'] + dataset['Parch'] + 1
-	dataset['NbFamily'] /= 20
-	dataset['Age'] /= 100
-	dataset['SibSp'] /= 10
-	dataset['Parch'] /= 10
-	dataset['Fare'] /= 600
-	dataset['Pclass'] = (dataset['Pclass'] - 1) / 2
+x = train_df
+y = train_result
+z = test_df
 
-print(train[['NbFamily', 'Survived']].groupby(['NbFamily'], as_index=False).mean().sort_values(by='Survived', ascending=False))
-print(train[['Title', 'Survived']].groupby(['Title'], as_index=False).mean().sort_values(by='Survived', ascending=False))
-print(pd.crosstab(train['Title'], train['Sex']))
+from keras.models import Sequential
+from keras.layers import Dense, Dropout
 
-utitle = train['Title'].unique()
-uclass = train['Pclass'].unique()
+model = Sequential()
+model.add(Dense(units=58, input_dim=all_df.shape[1] - 1, activation='relu'))
+model.add(Dropout(0.5))
+model.add(Dense(units=29, activation='relu'))
+model.add(Dropout(0.5))
+model.add(Dense(units=1, activation='relu'))
 
-for dataset in combine:
-	for i in uclass:
-		for u in utitle:
-			dataset.loc[(dataset.Age.isnull()) & (dataset['Title'] == u) & (dataset['Pclass'] == i), 'Age'] \
-			= dataset[(dataset['Title'] == u) & (dataset['Pclass'] == i)]['Age'].median()
+model.compile(loss='mse', optimizer='sgd')
 
-X_train = train.drop(['PassengerId', 'Name', 'Ticket', 'Cabin'], axis=1)
-Y_train = X_train.Survived
-X_train = X_train.drop(['Survived'], axis=1)
+# training
+print('Training -----------')
+for step in range(100001):
+    cost = model.train_on_batch(x, y)
+    if step % 10000 == 0:
+        print('step', step, 'train cost:', cost)
 
-X_test = test.drop(['PassengerId', 'Name', 'Ticket', 'Cabin'], axis=1)
+# predict
+test_predict = model.predict(z)
 
-X_test['Fare'].fillna(test['Fare'].dropna().median(), inplace = True)
-
-row_index = X_train.Embarked.isnull()
-
-X_train.loc[row_index, 'Embarked']='S'
-
-Embarked = pd.get_dummies(X_train.Embarked, prefix='Embarked')
-X_train = X_train.drop(['Embarked'], axis=1)
-X_train = pd.concat([X_train, Embarked], axis=1)
-X_train = X_train.drop(['Embarked_S'], axis=1)
-
-Embarked = pd.get_dummies(X_test.Embarked, prefix='Embarked')
-X_test = X_test.drop(['Embarked'], axis=1)
-X_test = pd.concat([X_test, Embarked], axis=1)
-X_test = X_test.drop(['Embarked_S'], axis=1)
-
-# -------------------------------
-
-Title = pd.get_dummies(X_train.Title, prefix='Title')
-X_train = X_train.drop(['Title'], axis=1)
-X_train = pd.concat([X_train, Title], axis=1)
-
-print(X_train)
-
-Title = pd.get_dummies(X_test.Title, prefix='Title')
-X_test = X_test.drop(['Title'], axis=1)
-X_test = pd.concat([X_test, Title], axis=1)
-
-print(X_test)
-
-X_train.to_csv('try.csv')
+# Generate Submission File
+test_predict = np.where(test_predict>0,1,0)
+NNSubmission = pd.DataFrame({ 'PassengerId': PassengerId,
+                            'Survived': test_predict.ravel() })
+NNSubmission.to_csv("NNSubmission.csv", index=False)
