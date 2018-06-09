@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.preprocessing import LabelEncoder
+from sklearn.preprocessing import LabelEncoder, scale
 
 train = pd.read_csv(r"dataset\train.csv")
 test = pd.read_csv(r"dataset\test.csv")
@@ -27,7 +27,12 @@ for dataset in combine:
 	dataset.Sex=labelEncoder_X.fit_transform(dataset.Sex)
 	dataset['Title'] = dataset['Name'].str.split(',').str[1].str.split('.').str[0].str.strip()
 	dataset['NbFamily'] = dataset['SibSp'] + dataset['Parch'] + 1
+	dataset['NbFamily'] /= 20
 	dataset['Age'] /= 100
+	dataset['SibSp'] /= 10
+	dataset['Parch'] /= 10
+	dataset['Fare'] /= 600
+	dataset['Pclass'] = (dataset['Pclass'] - 1) / 2
 
 print(train[['NbFamily', 'Survived']].groupby(['NbFamily'], as_index=False).mean().sort_values(by='Survived', ascending=False))
 print(train[['Title', 'Survived']].groupby(['Title'], as_index=False).mean().sort_values(by='Survived', ascending=False))
