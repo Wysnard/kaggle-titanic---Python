@@ -3,11 +3,13 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.preprocessing import LabelEncoder, StandardScaler, OneHotEncoder
+from keras.models import Sequential
+from keras.layers import Dense, Activation, Dropout
+from keras.utils import np_utils
 
 train = pd.read_csv(r"dataset\train.csv")
 train['Source'] = 0
-train['Survived'] = train['Survived'].replace(0, -1)
-result = train.Survived
+result = train['Survived']
 train = train.drop(['Survived'], axis=1)
 test = pd.read_csv(r"dataset\test.csv")
 test['Source'] = 1
@@ -15,55 +17,69 @@ all_df = pd.concat([train, test])
 
 all_df['Title'] = all_df['Name'].str.split(',').str[1].str.split('.').str[0].str.strip()
 all_df['NbFamily'] = all_df['SibSp'] + all_df['Parch'] + 1
-all_df['Embarked'].fillna('S', inplace=True)
-all_df['Cabin'].fillna('Z', inplace=True)
-all_df['Cabin'] = all_df['Cabin'].str[0]
 all_df['TicketSize'] = all_df['Ticket'].map(all_df.groupby('Ticket')['PassengerId'].count())
-utitle = all_df['Title'].unique()
-uclass = all_df['Pclass'].unique()
-for i in uclass:
-	all_df['Fare'].fillna(all_df.loc[all_df['Pclass'] == i]['Fare'].dropna().median(), inplace = True)
-	for u in utitle:
-		all_df.loc[(all_df.Age.isnull()) & (all_df['Title'] == u) & (all_df['Pclass'] == i), 'Age'] \
-		= all_df[(all_df['Title'] == u) & (all_df['Pclass'] == i)]['Age'].median()
+all_df['NoAge'] = np.where(all_df['Age'].isnull(), 1, 0)
+all_df['NoEmbarked'] = np.where(all_df['Embarked'].isnull(), 1, 0)
+ageGroup = all_df.groupby('Title')['Age'].mean()
+fareGroup = all_df.groupby('Pclass')['Fare'].median()
+v = {'Age' : all_df['Title'].map(ageGroup), 'Fare' : all_df['Pclass'].map(ageGroup) \
+	, 'Embarked' : 'S', 'Cabin' : 'Z'}
+all_df.fillna(value=v, inplace=True)
+all_df['Cabin'] = all_df['Cabin'].str[0]
+all_df['Sex'] = np.where(all_df['Sex'] == 'male', 1, 0)
+
 all_df = pd.get_dummies(all_df, columns=['Title', 'Pclass', 'Embarked', 'Cabin'])
 all_df = all_df.drop(['PassengerId', 'Name', 'Ticket'], axis=1)
 all_df = all_df.apply(LabelEncoder().fit_transform)
 
 all_df.to_csv('try.csv')
 
-train_df = all_df[all_df['Source'] == 0].drop(['Source'], axis=1).values
-train_result = result.values
-test_df = all_df[all_df['Source'] == 1].drop(['Source'], axis=1).values
+batch_size = 128
+epochs = 10000
 
-x = train_df
-y = train_result
-z = test_df
-
-from keras.models import Sequential
-from keras.layers import Dense, Dropout
+x_test = all_df[all_df['Source'] == 1]
+x_train = all_df[all_df['Source'] == 0]
+y_train = result
+y_train.to_csv('y_train.csv')
+dim_output = np.max(y_train) + 1
+print(y_train)
+print(dim_output)
+y_train = np_utils.to_categorical(y_train, dim_output)
+np.savetxt("category.csv", y_train, delimiter=";")
 
 model = Sequential()
-model.add(Dense(units=58, input_dim=all_df.shape[1] - 1, activation='relu'))
-model.add(Dropout(0.5))
-model.add(Dense(units=29, activation='relu'))
-model.add(Dropout(0.5))
-model.add(Dense(units=1, activation='relu'))
 
-model.compile(loss='mse', optimizer='sgd')
+model.add(Dense(256, input_dim=all_df.shape[1], init='uniform', activation='relu'))
+model.add(Dropout(0.3))
+model.add(Dense(128, activation='relu', kernel_initializer='uniform'))
+model.add(Dropout(0.2))
+model.add(Dense(128, activation='relu', kernel_initializer='uniform'))
+model.add(Dropout(0.2))
+model.add(Dense(128, activation='relu', kernel_initializer='uniform'))
+model.add(Dropout(0.2))
+model.add(Dense(64, activation='relu', kernel_initializer='uniform'))
+model.add(Dropout(0.2))
+model.add(Dense(dim_output, activation='softmax'))
 
-# training
-print('Training -----------')
-for step in range(100001):
-    cost = model.train_on_batch(x, y)
-    if step % 10000 == 0:
-        print('step', step, 'train cost:', cost)
+model.compile(loss='mse', optimizer='sgd', metrics=['accuracy'])
 
-# predict
-test_predict = model.predict(z)
+model.fit(
+	x_train, y_train
+	, batch_size=batch_size
+	, nb_epoch=epochs
+	, verbose=1
+)
 
-# Generate Submission File
-test_predict = np.where(test_predict>0,1,0)
-NNSubmission = pd.DataFrame({ 'PassengerId': PassengerId,
-                            'Survived': test_predict.ravel() })
-NNSubmission.to_csv("NNSubmission.csv", index=False)
+loss, accuracy = model.evaluate(x_train, y_train, verbose=1)
+print('loss: ', loss)
+print('accuracy: ', accuracy)
+print()
+pred_test = model.predict(x_test)
+pred_test = pred_test[:, 1]
+pred_test = np.where(pred_test >= 0.5, 1, 0)
+print(y_train)
+pred = pd.DataFrame()
+pred['PassengerId'] = test['PassengerId']
+pred['Survived'] = pred_test
+print(pred)
+pred.to_csv('titanic_pred.csv', index=False)
